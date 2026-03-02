@@ -19,7 +19,6 @@
 #include <readline/readline.h>
 #include <readline/history.h> /* history_expand() */
 #include <errno.h>
-#include <unistd.h> /* isatty() */
 
 #include "aux.h"
 #include "checks.h" /* is_number() */
@@ -33,6 +32,7 @@
 #include "navigation.h"
 #include "prompt.h"
 #include "properties.h" /* get_file_perms() */
+#include "readline.h"
 #include "sanitize.h"
 #include "sort.h" /* num_to_sort_name() */
 #include "spawn.h"
@@ -1710,14 +1710,7 @@ prompt(const int prompt_flag, const int screen_refresh)
 	prompt_offset = UNSET;
 
 	UNHIDE_CURSOR;
-
-	if (mouse_enabled == 0 && xargs.list_and_quit != 1
-	&& xargs.open != 1 && xargs.preview != 1
-	&& isatty(STDIN_FILENO) == 1 && isatty(STDOUT_FILENO) == 1) {
-		SET_MOUSE_TRACKING;
-		fflush(stdout);
-		mouse_enabled = 1;
-	}
+	enable_mouse_if_interactive();
 
 	/* Print the prompt and get user input */
 	char *input = readline(the_prompt);

@@ -566,6 +566,38 @@ enum mouse_scroll_filter {
 	MOUSE_SCROLL_FILTER_FILES
 };
 
+struct mouse_scroll_cmd_rule {
+	const char *name;
+	size_t len;
+	enum mouse_scroll_filter filter;
+};
+
+#define MOUSE_SCROLL_CMD_RULE(x, y) {(x), sizeof(x) - 1, (y)}
+
+static const struct mouse_scroll_cmd_rule mouse_scroll_cmd_rules[] = {
+	MOUSE_SCROLL_CMD_RULE("cd", MOUSE_SCROLL_FILTER_DIRS),
+	MOUSE_SCROLL_CMD_RULE("ls", MOUSE_SCROLL_FILTER_DIRS),
+	MOUSE_SCROLL_CMD_RULE("tree", MOUSE_SCROLL_FILTER_DIRS),
+	MOUSE_SCROLL_CMD_RULE("du", MOUSE_SCROLL_FILTER_DIRS),
+	MOUSE_SCROLL_CMD_RULE("mkdir", MOUSE_SCROLL_FILTER_DIRS),
+	MOUSE_SCROLL_CMD_RULE("md", MOUSE_SCROLL_FILTER_DIRS),
+	MOUSE_SCROLL_CMD_RULE("rmdir", MOUSE_SCROLL_FILTER_DIRS),
+	MOUSE_SCROLL_CMD_RULE("cat", MOUSE_SCROLL_FILTER_FILES),
+	MOUSE_SCROLL_CMD_RULE("less", MOUSE_SCROLL_FILTER_FILES),
+	MOUSE_SCROLL_CMD_RULE("more", MOUSE_SCROLL_FILTER_FILES),
+	MOUSE_SCROLL_CMD_RULE("bat", MOUSE_SCROLL_FILTER_FILES),
+	MOUSE_SCROLL_CMD_RULE("head", MOUSE_SCROLL_FILTER_FILES),
+	MOUSE_SCROLL_CMD_RULE("tail", MOUSE_SCROLL_FILTER_FILES),
+	MOUSE_SCROLL_CMD_RULE("view", MOUSE_SCROLL_FILTER_FILES),
+	MOUSE_SCROLL_CMD_RULE("open", MOUSE_SCROLL_FILTER_FILES),
+	MOUSE_SCROLL_CMD_RULE("o", MOUSE_SCROLL_FILTER_FILES),
+	MOUSE_SCROLL_CMD_RULE("vi", MOUSE_SCROLL_FILTER_FILES),
+	MOUSE_SCROLL_CMD_RULE("vim", MOUSE_SCROLL_FILTER_FILES),
+	MOUSE_SCROLL_CMD_RULE("nvim", MOUSE_SCROLL_FILTER_FILES),
+	MOUSE_SCROLL_CMD_RULE("nano", MOUSE_SCROLL_FILTER_FILES),
+	MOUSE_SCROLL_CMD_RULE("emacs", MOUSE_SCROLL_FILTER_FILES),
+};
+
 static enum mouse_scroll_filter mouse_scroll_filter = MOUSE_SCROLL_FILTER_ANY;
 
 enum mouse_seq_ret {
@@ -573,6 +605,18 @@ enum mouse_seq_ret {
 	MOUSE_SEQ_CONSUMED,
 	MOUSE_SEQ_ACCEPT_LINE
 };
+
+void
+enable_mouse_if_interactive(void)
+{
+	if (mouse_enabled == 0 && xargs.list_and_quit != 1
+	&& xargs.open != 1 && xargs.preview != 1
+	&& isatty(STDIN_FILENO) == 1 && isatty(STDOUT_FILENO) == 1) {
+		SET_MOUSE_TRACKING;
+		fflush(stdout);
+		mouse_enabled = 1;
+	}
+}
 
 static inline int
 is_blank_char(const char c)
@@ -677,25 +721,19 @@ escape_clicked_name(const filesn_t index)
 		return NULL;
 
 	const char *name = file_info[index].name;
-	size_t needs_escape = 0;
-	size_t has_backslash = 0;
-	for (size_t i = 0; name[i]; i++) {
-		if (is_quote_char(name[i]))
-			needs_escape = 1;
-		if (name[i] == '\\') {
-			has_backslash = 1;
-			break;
+	if (file_info[index].type == DT_REG
+	&& conf.quoting_style != QUOTING_STYLE_BACKSLASH) {
+		const char quote_char = conf.quoting_style
+			== QUOTING_STYLE_DOUBLE_QUOTES ? '"' : '\'';
+		/* Do not wrap with quotes if this would produce a broken token. */
+		if (strchr(name, quote_char) == NULL && strchr(name, '\\') == NULL) {
+			char *quoted = quote_str(name);
+			if (quoted)
+				return quoted;
 		}
 	}
 
-	if (needs_escape == 1 && has_backslash == 0) {
-		if (file_info[index].type == DT_REG
-		&& conf.quoting_style != QUOTING_STYLE_BACKSLASH)
-			return quote_str(name);
-		return escape_str(name);
-	}
-
-	return savestring(name, strlen(name));
+	return escape_str(name);
 }
 
 static int
@@ -771,6 +809,21 @@ handle_mouse_left_click(const int x, const int y)
 }
 
 static enum mouse_scroll_filter
+get_mouse_scroll_filter_by_cmd(const char *cmd, const size_t len)
+{
+	const size_t rules_n = sizeof(mouse_scroll_cmd_rules)
+		/ sizeof(mouse_scroll_cmd_rules[0]);
+
+	for (size_t i = 0; i < rules_n; i++) {
+		if (mouse_scroll_cmd_rules[i].len == len
+		&& strncmp(cmd, mouse_scroll_cmd_rules[i].name, len) == 0)
+			return mouse_scroll_cmd_rules[i].filter;
+	}
+
+	return MOUSE_SCROLL_FILTER_ANY;
+}
+
+static enum mouse_scroll_filter
 get_mouse_scroll_filter(const char *line)
 {
 	if (!line || !*line)
@@ -787,33 +840,7 @@ get_mouse_scroll_filter(const char *line)
 	while (*q && !is_blank_char(*q))
 		q++;
 
-	const size_t cmd_len = (size_t)(q - p);
-	if ((cmd_len == 2 && strncmp(p, "cd", 2) == 0)
-	|| (cmd_len == 2 && strncmp(p, "ls", 2) == 0)
-	|| (cmd_len == 4 && strncmp(p, "tree", 4) == 0)
-	|| (cmd_len == 2 && strncmp(p, "du", 2) == 0)
-	|| (cmd_len == 5 && strncmp(p, "mkdir", 5) == 0)
-	|| (cmd_len == 2 && strncmp(p, "md", 2) == 0)
-	|| (cmd_len == 5 && strncmp(p, "rmdir", 5) == 0))
-		return MOUSE_SCROLL_FILTER_DIRS;
-
-	if ((cmd_len == 3 && strncmp(p, "cat", 3) == 0)
-	|| (cmd_len == 4 && strncmp(p, "less", 4) == 0)
-	|| (cmd_len == 4 && strncmp(p, "more", 4) == 0)
-	|| (cmd_len == 3 && strncmp(p, "bat", 3) == 0)
-	|| (cmd_len == 4 && strncmp(p, "head", 4) == 0)
-	|| (cmd_len == 4 && strncmp(p, "tail", 4) == 0)
-	|| (cmd_len == 4 && strncmp(p, "view", 4) == 0)
-	|| (cmd_len == 4 && strncmp(p, "open", 4) == 0)
-	|| (cmd_len == 1 && strncmp(p, "o", 1) == 0)
-	|| (cmd_len == 2 && strncmp(p, "vi", 2) == 0)
-	|| (cmd_len == 3 && strncmp(p, "vim", 3) == 0)
-	|| (cmd_len == 4 && strncmp(p, "nvim", 4) == 0)
-	|| (cmd_len == 4 && strncmp(p, "nano", 4) == 0)
-	|| (cmd_len == 5 && strncmp(p, "emacs", 5) == 0))
-		return MOUSE_SCROLL_FILTER_FILES;
-
-	return MOUSE_SCROLL_FILTER_ANY;
+	return get_mouse_scroll_filter_by_cmd(p, (size_t)(q - p));
 }
 
 static int
@@ -984,6 +1011,12 @@ handle_mouse_sequence(FILE *stream)
 		seq[len++] = c;
 		if (c == 'M' || c == 'm')
 			break;
+	}
+
+	if (len == sizeof(seq) - 1
+	&& seq[len - 1] != 'M' && seq[len - 1] != 'm') {
+		queue_pending_bytes(seq, len);
+		return MOUSE_SEQ_NOT_MOUSE;
 	}
 
 	if (len < 5 || (seq[len - 1] != 'M' && seq[len - 1] != 'm'))
@@ -5051,13 +5084,7 @@ initialize_readline(void)
 	quote_chars = savestring(rl_filename_quote_characters,
 	    strlen(rl_filename_quote_characters));
 
-	if (mouse_enabled == 0 && xargs.list_and_quit != 1
-	&& xargs.open != 1 && xargs.preview != 1
-	&& isatty(STDIN_FILENO) == 1 && isatty(STDOUT_FILENO) == 1) {
-		SET_MOUSE_TRACKING;
-		fflush(stdout);
-		mouse_enabled = 1;
-	}
+	enable_mouse_if_interactive();
 
 	return FUNC_SUCCESS;
 }
