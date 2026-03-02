@@ -547,7 +547,9 @@ fix_rl_point(const unsigned char c)
 }
 
 /* Mouse support (SGR mode: ESC [ < b ; x ; y M/m) */
-#define MOUSE_PARSE_TIMEOUT_MS 25
+/* Keep these short to avoid noticeable delays for non-mouse ESC sequences. */
+#define MOUSE_PARSE_TIMEOUT_FIRST_MS 8
+#define MOUSE_PARSE_TIMEOUT_NEXT_MS  4
 #define MOUSE_DBLCLICK_MAX_MS 350
 #define MOUSE_PENDING_BUF_SIZE 64
 
@@ -817,7 +819,7 @@ handle_mouse_sequence(FILE *stream)
 	size_t len = 0;
 	unsigned char c = 0;
 
-	if (!read_byte_with_timeout(fd, &c, MOUSE_PARSE_TIMEOUT_MS))
+	if (!read_byte_with_timeout(fd, &c, MOUSE_PARSE_TIMEOUT_FIRST_MS))
 		return MOUSE_SEQ_NOT_MOUSE;
 
 	if (c != '[') {
@@ -826,7 +828,7 @@ handle_mouse_sequence(FILE *stream)
 	}
 	seq[len++] = c;
 
-	if (!read_byte_with_timeout(fd, &c, MOUSE_PARSE_TIMEOUT_MS)) {
+	if (!read_byte_with_timeout(fd, &c, MOUSE_PARSE_TIMEOUT_NEXT_MS)) {
 		queue_pending_bytes(seq, len);
 		return MOUSE_SEQ_NOT_MOUSE;
 	}
@@ -839,7 +841,7 @@ handle_mouse_sequence(FILE *stream)
 	seq[len++] = c;
 
 	while (len < sizeof(seq) - 1) {
-		if (!read_byte_with_timeout(fd, &c, MOUSE_PARSE_TIMEOUT_MS)) {
+		if (!read_byte_with_timeout(fd, &c, MOUSE_PARSE_TIMEOUT_NEXT_MS)) {
 			queue_pending_bytes(seq, len);
 			return MOUSE_SEQ_NOT_MOUSE;
 		}
