@@ -580,6 +580,18 @@ is_blank_char(const char c)
 	return c == ' ' || c == '\t';
 }
 
+static int
+has_command_prefix(const char *line)
+{
+	if (!line || !*line)
+		return 0;
+
+	while (*line && is_blank_char(*line))
+		line++;
+
+	return *line ? 1 : 0;
+}
+
 static void
 clear_mouse_scroll_prefix(void)
 {
@@ -717,7 +729,21 @@ handle_mouse_left_click(const int x, const int y)
 #endif /* !_NO_SUGGESTIONS */
 
 	if (is_double_click == 0) {
-		rl_replace_line(arg, 1);
+		if (has_command_prefix(rl_line_buffer) == 1) {
+			const char *line = rl_line_buffer;
+			const size_t line_len = strlen(line);
+			const int need_space = (line_len == 0
+				|| is_blank_char(line[line_len - 1])) ? 0 : 1;
+			const size_t new_len = line_len + (size_t)need_space
+				+ strlen(arg) + 1;
+			char *new_line = xnmalloc(new_len, sizeof(char));
+			snprintf(new_line, new_len, "%s%s%s", line,
+				need_space == 1 ? " " : "", arg);
+			rl_replace_line(new_line, 1);
+			free(new_line);
+		} else {
+			rl_replace_line(arg, 1);
+		}
 		rl_point = rl_end;
 		rl_redisplay();
 		free(arg);
