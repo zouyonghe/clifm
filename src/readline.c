@@ -557,48 +557,6 @@ static size_t mouse_pending_pos = 0;
 
 static filesn_t mouse_last_index = (filesn_t)-1;
 static struct timespec mouse_last_click = {0};
-static filesn_t mouse_scroll_index = (filesn_t)-1;
-static char *mouse_scroll_cmd_prefix = NULL;
-
-enum mouse_scroll_filter {
-	MOUSE_SCROLL_FILTER_ANY = 0,
-	MOUSE_SCROLL_FILTER_DIRS,
-	MOUSE_SCROLL_FILTER_FILES
-};
-
-struct mouse_scroll_cmd_rule {
-	const char *name;
-	size_t len;
-	enum mouse_scroll_filter filter;
-};
-
-#define MOUSE_SCROLL_CMD_RULE(x, y) {(x), sizeof(x) - 1, (y)}
-
-static const struct mouse_scroll_cmd_rule mouse_scroll_cmd_rules[] = {
-	MOUSE_SCROLL_CMD_RULE("cd", MOUSE_SCROLL_FILTER_DIRS),
-	MOUSE_SCROLL_CMD_RULE("ls", MOUSE_SCROLL_FILTER_DIRS),
-	MOUSE_SCROLL_CMD_RULE("tree", MOUSE_SCROLL_FILTER_DIRS),
-	MOUSE_SCROLL_CMD_RULE("du", MOUSE_SCROLL_FILTER_DIRS),
-	MOUSE_SCROLL_CMD_RULE("mkdir", MOUSE_SCROLL_FILTER_DIRS),
-	MOUSE_SCROLL_CMD_RULE("md", MOUSE_SCROLL_FILTER_DIRS),
-	MOUSE_SCROLL_CMD_RULE("rmdir", MOUSE_SCROLL_FILTER_DIRS),
-	MOUSE_SCROLL_CMD_RULE("cat", MOUSE_SCROLL_FILTER_FILES),
-	MOUSE_SCROLL_CMD_RULE("less", MOUSE_SCROLL_FILTER_FILES),
-	MOUSE_SCROLL_CMD_RULE("more", MOUSE_SCROLL_FILTER_FILES),
-	MOUSE_SCROLL_CMD_RULE("bat", MOUSE_SCROLL_FILTER_FILES),
-	MOUSE_SCROLL_CMD_RULE("head", MOUSE_SCROLL_FILTER_FILES),
-	MOUSE_SCROLL_CMD_RULE("tail", MOUSE_SCROLL_FILTER_FILES),
-	MOUSE_SCROLL_CMD_RULE("view", MOUSE_SCROLL_FILTER_FILES),
-	MOUSE_SCROLL_CMD_RULE("open", MOUSE_SCROLL_FILTER_FILES),
-	MOUSE_SCROLL_CMD_RULE("o", MOUSE_SCROLL_FILTER_FILES),
-	MOUSE_SCROLL_CMD_RULE("vi", MOUSE_SCROLL_FILTER_FILES),
-	MOUSE_SCROLL_CMD_RULE("vim", MOUSE_SCROLL_FILTER_FILES),
-	MOUSE_SCROLL_CMD_RULE("nvim", MOUSE_SCROLL_FILTER_FILES),
-	MOUSE_SCROLL_CMD_RULE("nano", MOUSE_SCROLL_FILTER_FILES),
-	MOUSE_SCROLL_CMD_RULE("emacs", MOUSE_SCROLL_FILTER_FILES),
-};
-
-static enum mouse_scroll_filter mouse_scroll_filter = MOUSE_SCROLL_FILTER_ANY;
 
 enum mouse_seq_ret {
 	MOUSE_SEQ_NOT_MOUSE = 0,
@@ -637,14 +595,6 @@ has_command_prefix(const char *line)
 }
 
 static void
-clear_mouse_scroll_prefix(void)
-{
-	free(mouse_scroll_cmd_prefix);
-	mouse_scroll_cmd_prefix = NULL;
-	mouse_scroll_filter = MOUSE_SCROLL_FILTER_ANY;
-}
-
-static void
 queue_pending_byte(const unsigned char c)
 {
 	if (mouse_pending_len >= MOUSE_PENDING_BUF_SIZE)
@@ -679,7 +629,11 @@ read_byte_with_timeout(const int fd, unsigned char *c, const int timeout_ms)
 		return 0;
 
 	struct pollfd pfd = {.fd = fd, .events = POLLIN, .revents = 0};
-	const int pret = poll(&pfd, 1, timeout_ms);
+	int pret;
+	do {
+		pret = poll(&pfd, 1, timeout_ms);
+	} while (pret < 0 && errno == EINTR);
+
 	if (pret <= 0 || (pfd.revents & POLLIN) == 0)
 		return 0;
 
@@ -758,8 +712,6 @@ handle_mouse_left_click(const int x, const int y)
 
 	mouse_last_index = index;
 	mouse_last_click = now;
-	mouse_scroll_index = index;
-	clear_mouse_scroll_prefix();
 
 #ifndef _NO_SUGGESTIONS
 	if (suggestion_buf)
@@ -808,166 +760,49 @@ handle_mouse_left_click(const int x, const int y)
 	return MOUSE_SEQ_ACCEPT_LINE;
 }
 
-static enum mouse_scroll_filter
-get_mouse_scroll_filter_by_cmd(const char *cmd, const size_t len)
-{
-	const size_t rules_n = sizeof(mouse_scroll_cmd_rules)
-		/ sizeof(mouse_scroll_cmd_rules[0]);
-
-	for (size_t i = 0; i < rules_n; i++) {
-		if (mouse_scroll_cmd_rules[i].len == len
-		&& strncmp(cmd, mouse_scroll_cmd_rules[i].name, len) == 0)
-			return mouse_scroll_cmd_rules[i].filter;
-	}
-
-	return MOUSE_SCROLL_FILTER_ANY;
-}
-
-static enum mouse_scroll_filter
-get_mouse_scroll_filter(const char *line)
-{
-	if (!line || !*line)
-		return MOUSE_SCROLL_FILTER_ANY;
-
-	const char *p = line;
-	while (*p && is_blank_char(*p))
-		p++;
-
-	if (!*p)
-		return MOUSE_SCROLL_FILTER_ANY;
-
-	const char *q = p;
-	while (*q && !is_blank_char(*q))
-		q++;
-
-	return get_mouse_scroll_filter_by_cmd(p, (size_t)(q - p));
-}
-
-static int
-match_mouse_scroll_filter(const filesn_t index, const enum mouse_scroll_filter filter)
-{
-	if (!file_info || index < 0 || index >= g_files_num || !file_info[index].name)
-		return 0;
-
-	if (filter == MOUSE_SCROLL_FILTER_DIRS)
-		return file_info[index].dir == 1;
-	if (filter == MOUSE_SCROLL_FILTER_FILES)
-		return file_info[index].dir == 0;
-
-	return 1;
-}
-
-static filesn_t
-find_mouse_scroll_target(filesn_t base, const int dir,
-	const enum mouse_scroll_filter filter)
-{
-	if (!file_info || g_files_num <= 0 || (dir != -1 && dir != 1))
-		return (filesn_t)-1;
-
-	filesn_t cur = base;
-	filesn_t n = g_files_num;
-	while (n-- > 0) {
-		cur += dir;
-		if (cur < 0)
-			cur = g_files_num - 1;
-		else if (cur >= g_files_num)
-			cur = 0;
-
-		if (match_mouse_scroll_filter(cur, filter) == 1)
-			return cur;
-	}
-
-	return (filesn_t)-1;
-}
-
-static const char *
-update_mouse_scroll_prefix(const enum mouse_scroll_filter filter)
-{
-	const char *line = (rl_line_buffer && *rl_line_buffer)
-		? rl_line_buffer : "";
-
-	if (filter == MOUSE_SCROLL_FILTER_ANY) {
-		clear_mouse_scroll_prefix();
-		return NULL;
-	}
-
-	if (mouse_scroll_cmd_prefix
-	&& mouse_scroll_filter == filter
-	&& strncmp(line, mouse_scroll_cmd_prefix, strlen(mouse_scroll_cmd_prefix)) == 0)
-		return mouse_scroll_cmd_prefix;
-
-	clear_mouse_scroll_prefix();
-
-	const size_t line_len = strlen(line);
-	if (line_len == 0)
-		return NULL;
-
-	const int has_trailing_blank = is_blank_char(line[line_len - 1]);
-	const size_t prefix_len = line_len + (has_trailing_blank == 1 ? 0 : 1);
-	mouse_scroll_cmd_prefix = xnmalloc(prefix_len + 1, sizeof(char));
-	memcpy(mouse_scroll_cmd_prefix, line, line_len);
-	if (has_trailing_blank == 0)
-		mouse_scroll_cmd_prefix[line_len] = ' ';
-	mouse_scroll_cmd_prefix[prefix_len] = '\0';
-	mouse_scroll_filter = filter;
-
-	return mouse_scroll_cmd_prefix;
-}
-
 static int
 handle_mouse_scroll(const int x, const int y, const int dir)
 {
-	if (!file_info || g_files_num == 0 || (dir != -1 && dir != 1))
+	UNUSED(x); UNUSED(y);
+	if ((dir != -1 && dir != 1) || !history || current_hist_n == 0)
 		return MOUSE_SEQ_CONSUMED;
-
-	const enum mouse_scroll_filter filter =
-		get_mouse_scroll_filter(rl_line_buffer);
-	const char *cmd_prefix = update_mouse_scroll_prefix(filter);
-
-	const filesn_t pointed = get_clicked_file_by_coord(x, y);
-	if (pointed != (filesn_t)-1
-	&& match_mouse_scroll_filter(pointed, filter) == 1)
-		mouse_scroll_index = pointed;
-
-	filesn_t base = mouse_scroll_index;
-	if (base < 0 || base >= g_files_num) {
-		base = (mouse_last_index >= 0 && mouse_last_index < g_files_num)
-			? mouse_last_index : (dir > 0 ? (filesn_t)-1 : 0);
-	}
-
-	const filesn_t target = find_mouse_scroll_target(base, dir, filter);
-	if (target == (filesn_t)-1)
-		return MOUSE_SEQ_CONSUMED;
-
-	char *arg = escape_clicked_name(target);
-	if (!arg || !*arg) {
-		free(arg);
-		return MOUSE_SEQ_CONSUMED;
-	}
 
 #ifndef _NO_SUGGESTIONS
 	if (suggestion_buf)
 		clear_suggestion(CS_FREEBUF);
 #endif /* !_NO_SUGGESTIONS */
 
-	if (cmd_prefix && *cmd_prefix) {
-		const size_t line_len = strlen(cmd_prefix) + strlen(arg) + 1;
-		char *line = xnmalloc(line_len, sizeof(char));
-		snprintf(line, line_len, "%s%s", cmd_prefix, arg);
-		rl_replace_line(line, 1);
-		free(line);
-	} else {
-		rl_replace_line(arg, 1);
+	cmdhist_flag = 1;
+	size_t p = curhistindex;
+	if (p > current_hist_n)
+		p = current_hist_n;
+
+	if (dir < 0) { /* Wheel up: previous (older) history entry. */
+		if (p == 0)
+			return MOUSE_SEQ_CONSUMED;
+		p--;
+	} else { /* Wheel down: next (newer) history entry. */
+		if (p >= current_hist_n) {
+			curhistindex = current_hist_n;
+			return MOUSE_SEQ_CONSUMED;
+		}
+		p++;
+		if (p >= current_hist_n) {
+			rl_replace_line("", 1);
+			rl_point = rl_end;
+			rl_redisplay();
+			curhistindex = current_hist_n;
+			return MOUSE_SEQ_CONSUMED;
+		}
 	}
 
+	if (!history[p].cmd)
+		return MOUSE_SEQ_CONSUMED;
+
+	rl_replace_line(history[p].cmd, 1);
 	rl_point = rl_end;
 	rl_redisplay();
-	cmdhist_flag = 1;
-
-	free(arg);
-	mouse_scroll_index = target;
-	mouse_last_index = target;
-	mouse_last_click = (struct timespec){0};
+	curhistindex = p;
 	return MOUSE_SEQ_CONSUMED;
 }
 
