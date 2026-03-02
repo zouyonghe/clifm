@@ -760,11 +760,29 @@ get_mouse_scroll_filter(const char *line)
 		q++;
 
 	const size_t cmd_len = (size_t)(q - p);
-	if (cmd_len == 2 && strncmp(p, "cd", 2) == 0)
+	if ((cmd_len == 2 && strncmp(p, "cd", 2) == 0)
+	|| (cmd_len == 2 && strncmp(p, "ls", 2) == 0)
+	|| (cmd_len == 4 && strncmp(p, "tree", 4) == 0)
+	|| (cmd_len == 2 && strncmp(p, "du", 2) == 0)
+	|| (cmd_len == 5 && strncmp(p, "mkdir", 5) == 0)
+	|| (cmd_len == 2 && strncmp(p, "md", 2) == 0)
+	|| (cmd_len == 5 && strncmp(p, "rmdir", 5) == 0))
 		return MOUSE_SCROLL_FILTER_DIRS;
-	if (cmd_len == 2 && strncmp(p, "ls", 2) == 0)
-		return MOUSE_SCROLL_FILTER_DIRS;
-	if (cmd_len == 3 && strncmp(p, "cat", 3) == 0)
+
+	if ((cmd_len == 3 && strncmp(p, "cat", 3) == 0)
+	|| (cmd_len == 4 && strncmp(p, "less", 4) == 0)
+	|| (cmd_len == 4 && strncmp(p, "more", 4) == 0)
+	|| (cmd_len == 3 && strncmp(p, "bat", 3) == 0)
+	|| (cmd_len == 4 && strncmp(p, "head", 4) == 0)
+	|| (cmd_len == 4 && strncmp(p, "tail", 4) == 0)
+	|| (cmd_len == 4 && strncmp(p, "view", 4) == 0)
+	|| (cmd_len == 4 && strncmp(p, "open", 4) == 0)
+	|| (cmd_len == 1 && strncmp(p, "o", 1) == 0)
+	|| (cmd_len == 2 && strncmp(p, "vi", 2) == 0)
+	|| (cmd_len == 3 && strncmp(p, "vim", 3) == 0)
+	|| (cmd_len == 4 && strncmp(p, "nvim", 4) == 0)
+	|| (cmd_len == 4 && strncmp(p, "nano", 4) == 0)
+	|| (cmd_len == 5 && strncmp(p, "emacs", 5) == 0))
 		return MOUSE_SCROLL_FILTER_FILES;
 
 	return MOUSE_SCROLL_FILTER_ANY;
