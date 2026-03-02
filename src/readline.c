@@ -703,15 +703,15 @@ handle_mouse_left_click(const int x, const int y)
 		return MOUSE_SEQ_CONSUMED;
 	}
 
-	struct timespec now;
-	clock_gettime(CLOCK_MONOTONIC, &now);
-
-	const int is_double_click = (mouse_last_index == index
+	struct timespec now = {0};
+	const int clock_ok = (clock_gettime(CLOCK_MONOTONIC, &now) == 0);
+	const int is_double_click = (clock_ok == 1
+		&& mouse_last_index == index
 		&& mouse_last_click.tv_sec > 0
 		&& get_elapsed_ms(&mouse_last_click, &now) <= MOUSE_DBLCLICK_MAX_MS);
 
 	mouse_last_index = index;
-	mouse_last_click = now;
+	mouse_last_click = (clock_ok == 1) ? now : (struct timespec){0};
 
 #ifndef _NO_SUGGESTIONS
 	if (suggestion_buf)
