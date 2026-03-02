@@ -151,13 +151,17 @@ static inline void
 set_mouse_hitbox(const filesn_t i, const int row, const int col_start,
 	const int col_end)
 {
+	int start, end;
+
 	if (!file_info || !file_info[i].name)
 		return;
 
+	start = col_start > 0 ? col_start : 1;
+	end = (col_end >= start) ? col_end : start;
+
 	file_info[i].mouse_row = mouse_row_origin + row;
-	file_info[i].mouse_col_start = col_start > 0 ? col_start : 1;
-	file_info[i].mouse_col_end = col_end >= col_start
-		? col_end : col_start;
+	file_info[i].mouse_col_start = start;
+	file_info[i].mouse_col_end = end;
 }
 
 static void
