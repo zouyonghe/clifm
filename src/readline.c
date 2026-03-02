@@ -746,6 +746,7 @@ handle_mouse_left_click(const int x, const int y)
 		}
 		rl_point = rl_end;
 		rl_redisplay();
+		cmdhist_flag = 1;
 		free(arg);
 		return MOUSE_SEQ_CONSUMED;
 	}
@@ -760,6 +761,7 @@ handle_mouse_left_click(const int x, const int y)
 	rl_replace_line(cmd, 1);
 	rl_point = rl_end;
 	rl_redisplay();
+	cmdhist_flag = 1;
 
 	free(cmd);
 	free(arg);
@@ -933,6 +935,7 @@ handle_mouse_scroll(const int x, const int y, const int dir)
 
 	rl_point = rl_end;
 	rl_redisplay();
+	cmdhist_flag = 1;
 
 	free(arg);
 	mouse_scroll_index = target;
